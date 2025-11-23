@@ -6,6 +6,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
@@ -15,6 +16,7 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.util.List;
+import java.util.Arrays;
 
 @Configuration
 @EnableWebSecurity
@@ -25,59 +27,53 @@ public class SecurityConfig {
         return new BCryptPasswordEncoder();
     }
 
-
+    // Inyectamos la URL. Si son varias separadas por coma, podemos parsearlas.
     @Value("${frontend.url}")
     private String frontendUrl;
-
-    // En SecurityConfig.java
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
 
         http
-                // 1. ACTIVAR CORS (¡ESTO FALTABA!)
-                // Le dice a Spring Security: "Usa la configuración de corsConfigurationSource que definí abajo"
+                // 1. ACTIVAR CORS
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
-                .csrf(csrf -> csrf.disable())
+                // 2. Desactivar CSRF (API Stateless)
+                .csrf(AbstractHttpConfigurer::disable)
+                // 3. Stateless Session
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                // 4. Rutas Públicas y Privadas
                 .authorizeHttpRequests(auth -> auth
-
-                        // --- ¡LA CORRECCIÓN ESTÁ AQUÍ! ---
-                        // 1. Permite el acceso anónimo a los endpoints de autenticación de Mosquitto
-
-                        // 2. Permite el acceso anónimo a tu login/registro web
-                        .requestMatchers("/api/auth/**").permitAll()
-
-                        // 3. (Opcional) Permite el acceso a los WebSockets
-                        .requestMatchers("/ws/**").permitAll()
-
-                        // 4. Asegura todos los demás endpoints
+                        // Acceso libre a MQTT auth, Login/Registro y WebSockets
+                        .requestMatchers("/api/mqtt/**", "/api/auth/**", "/ws/**").permitAll()
+                        // Todo lo demás requiere autenticación
                         .anyRequest().authenticated()
+                )
+                // 5. Basic Auth
+                .httpBasic(Customizer.withDefaults());
 
-                )// --- ¡LA CORRECCIÓN ESTÁ AQUÍ! ---
-                // 5. Habilita HTTP Basic Authentication
-                .httpBasic(Customizer.withDefaults()); // <-- AÑADIR ESTA LÍNEA
-
-        // ...
         return http.build();
     }
 
-
-    // --- CONFIGURACIÓN CORS ---
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
 
-        // Permitir solo a tu Frontend
-        configuration.setAllowedOrigins(List.of(frontendUrl));
+        // TRUCO: Soportar múltiples orígenes si frontendUrl viene separado por comas
+        // Ejemplo de valor: "http://localhost:3000,http://189.197.116.236:3000"
+        List<String> allowedOrigins = Arrays.asList(frontendUrl.split(","));
 
-        // Permitir los métodos HTTP necesarios
-        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+        configuration.setAllowedOrigins(allowedOrigins);
 
-        // Permitir headers (Authorization, Content-Type, etc.)
-        configuration.setAllowedHeaders(List.of("*"));
+        // Métodos permitidos
+        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
 
-        // Permitir enviar credenciales (cookies o auth headers)
+        // Headers permitidos (Authorization es vital para Basic Auth)
+        configuration.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Requested-With", "Accept", "Origin"));
+
+        // Exponer headers si el front necesita leer algo específico
+        configuration.setExposedHeaders(List.of("Authorization"));
+
+        // Credenciales (Cookies/Auth Headers)
         configuration.setAllowCredentials(true);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
