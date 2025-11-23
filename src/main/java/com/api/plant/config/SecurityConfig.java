@@ -9,6 +9,11 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+
+import java.util.List;
 
 @Configuration
 @EnableWebSecurity
@@ -26,14 +31,15 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
 
         http
+                // 1. ACTIVAR CORS (¡ESTO FALTABA!)
+                // Le dice a Spring Security: "Usa la configuración de corsConfigurationSource que definí abajo"
+                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
 
                         // --- ¡LA CORRECCIÓN ESTÁ AQUÍ! ---
                         // 1. Permite el acceso anónimo a los endpoints de autenticación de Mosquitto
-                        // 1. Permite el acceso anónimo a los endpoints de autenticación de Mosquitto
-                        .requestMatchers("/api/mqtt/**").permitAll()
 
                         // 2. Permite el acceso anónimo a tu login/registro web
                         .requestMatchers("/api/auth/**").permitAll()
@@ -50,5 +56,28 @@ public class SecurityConfig {
 
         // ...
         return http.build();
+    }
+
+
+    // --- CONFIGURACIÓN CORS ---
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration configuration = new CorsConfiguration();
+
+        // Permitir solo a tu Frontend
+        configuration.setAllowedOrigins(List.of("http://localhost:3000"));
+
+        // Permitir los métodos HTTP necesarios
+        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+
+        // Permitir headers (Authorization, Content-Type, etc.)
+        configuration.setAllowedHeaders(List.of("*"));
+
+        // Permitir enviar credenciales (cookies o auth headers)
+        configuration.setAllowCredentials(true);
+
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", configuration);
+        return source;
     }
 }

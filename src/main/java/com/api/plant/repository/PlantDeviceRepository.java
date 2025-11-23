@@ -25,6 +25,9 @@ public interface PlantDeviceRepository extends MongoRepository<PlantDevice, Stri
     Optional<PlantDevice> findByMacAddress(String macAddress);
 
 
+    List<PlantDevice> findByIsActiveTrue();
+
+
     /**
      * Busca dispositivos que están en "Modo Cero":
      * Tienen una MAC registrada (fueron descubiertos)

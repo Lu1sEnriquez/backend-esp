@@ -14,11 +14,9 @@ public class PlantDevice {
     @Id
     private String id;
     private String ownerId;
-    private String brokerId;
     private String plantId;
     private String name;
     private String description;
-    private String mqttPassword;
 
     // --- Campo Crucial para Provisioning ---
     @Indexed(unique = true, sparse = true)
@@ -75,13 +73,7 @@ public class PlantDevice {
         this.ownerId = ownerId;
     }
 
-    public String getBrokerId() {
-        return brokerId;
-    }
 
-    public void setBrokerId(String brokerId) {
-        this.brokerId = brokerId;
-    }
 
     public String getPlantId() {
         return plantId;
@@ -115,13 +107,7 @@ public class PlantDevice {
         this.description = description;
     }
 
-    public String getMqttPassword() {
-        return mqttPassword;
-    }
 
-    public void setMqttPassword(String mqttPassword) {
-        this.mqttPassword = mqttPassword;
-    }
 
     // --- Humedad AMBIENTAL ---
     public Integer getMinHumidity() {

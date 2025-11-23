@@ -1,0 +1,18 @@
+# 1. Etapa de Construcción (Build)
+FROM maven:3.9.6-eclipse-temurin-21 AS build
+WORKDIR /app
+COPY pom.xml .
+COPY src ./src
+# Empaquetamos el .jar saltando los tests para evitar errores de entorno en el build
+RUN mvn clean package -DskipTests
+
+# 2. Etapa de Ejecución (Run)
+FROM eclipse-temurin:21-jdk-alpine
+WORKDIR /app
+COPY --from=build /app/target/*.jar app.jar
+
+# Puerto que expone Spring Boot
+EXPOSE 8080
+
+# Comando de inicio
+ENTRYPOINT ["java", "-jar", "app.jar"]
