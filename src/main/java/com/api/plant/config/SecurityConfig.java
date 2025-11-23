@@ -1,5 +1,6 @@
 package com.api.plant.config;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.Customizer;
@@ -24,6 +25,9 @@ public class SecurityConfig {
         return new BCryptPasswordEncoder();
     }
 
+
+    @Value("${frontend.url}")
+    private String frontendUrl;
 
     // En SecurityConfig.java
 
@@ -65,7 +69,7 @@ public class SecurityConfig {
         CorsConfiguration configuration = new CorsConfiguration();
 
         // Permitir solo a tu Frontend
-        configuration.setAllowedOrigins(List.of("http://localhost:3000"));
+        configuration.setAllowedOrigins(List.of(frontendUrl));
 
         // Permitir los métodos HTTP necesarios
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
