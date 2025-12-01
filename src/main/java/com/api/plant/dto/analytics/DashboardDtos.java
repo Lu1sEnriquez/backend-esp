@@ -13,6 +13,7 @@ public class DashboardDtos {
     public record KpiDto(
             Double currentTemp,
             Double currentSoil,
+            Double currentHumidity,
             Integer currentLight,
             Double healthIndex,   // ESI (KPI 1)
             Double dataQuality,   // DQR (KPI 2)

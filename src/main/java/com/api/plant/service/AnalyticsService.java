@@ -40,7 +40,10 @@ public class AnalyticsService {
     private static final double DEFAULT_MAX_TEMP = 30.0;
     private static final double DEFAULT_MIN_SOIL = 30.0;
     private static final double DEFAULT_MAX_SOIL = 70.0;
+    private static final double DEFAULT_MIN_HUMIDITY = 30.0;
+    private static final double DEFAULT_MAX_HUMIDITY = 80.0;
     private static final double DEFAULT_MIN_LIGHT = 200.0;
+    private static final double DEFAULT_MAX_LIGHT = 5000.0;
 
     public List<ChartPointDto> getHistoricalData(String plantId, String field, String range) {
         String flux = String.format(
@@ -76,11 +79,11 @@ public class AnalyticsService {
         double maxSoil = getSafeConfig(deviceConfig != null ? deviceConfig.getMaxSoilHumidity().doubleValue() : null, DEFAULT_MAX_SOIL);
 
         double minLight = getSafeConfig(deviceConfig != null ? deviceConfig.getMinLightLux().doubleValue() : null, DEFAULT_MIN_LIGHT);
-        double maxLight = getSafeConfig(deviceConfig != null ? deviceConfig.getMaxLightLux().doubleValue() : null, 5000.0); // Default alto
+        double maxLight = getSafeConfig(deviceConfig != null ? deviceConfig.getMaxLightLux().doubleValue() : null, DEFAULT_MAX_LIGHT); // Default alto
 
         // Agregamos Humedad Ambiental (Si no existe en config, usamos defaults 40-80)
-        double minHumAire = getSafeConfig(deviceConfig != null ? deviceConfig.getMinHumidity().doubleValue() : null, 40.0);
-        double maxHumAire = getSafeConfig(deviceConfig != null ? deviceConfig.getMaxHumidity().doubleValue() : null, 80.0);
+        double minHumAire = getSafeConfig(deviceConfig != null ? deviceConfig.getMinHumidity().doubleValue() : null, DEFAULT_MIN_HUMIDITY);
+        double maxHumAire = getSafeConfig(deviceConfig != null ? deviceConfig.getMaxHumidity().doubleValue() : null, DEFAULT_MAX_HUMIDITY);
 
         // 3. Obtener valores actuales de InfluxDB
         Double temp = getLastValue(plantId, InfluxConstants.FIELD_TEMPERATURA);
@@ -123,6 +126,7 @@ public class AnalyticsService {
         return new KpiDto(
                 temp,
                 soil,
+                humAire,
                 light != null ? light.intValue() : 0,
                 Math.round(finalEsi * 10.0) / 10.0, // Redondeo a 1 decimal
                 Math.round(dqr * 10.0) / 10.0,
