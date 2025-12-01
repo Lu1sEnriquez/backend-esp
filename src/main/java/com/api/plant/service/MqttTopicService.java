@@ -5,29 +5,33 @@ import org.springframework.stereotype.Service;
 @Service
 public class MqttTopicService {
 
-    // --- PREFIJOS CENTRALIZADOS ---
+    // --- CONSTANTES PARA TÓPICOS ---
     private static final String PLANT_PREFIX = "planta";
-    private static final String CONTROL_PREFIX = "control/provisioning";
+    private static final String LECTURAS_SUFFIX = "lecturas";
+    private static final String COMMAND_SUFFIX = "command";
+    private static final String GENERAL = "general";
+    private static final String TOPIC_SEPARATOR = "/";
+    private static final String WILDCARD = "#";
 
     /**
      * Tópico de suscripción Wildcard (ej: "planta/#")
      */
     public String getWildcardSubscriptionTopic() {
-        return String.format("%s/#", PLANT_PREFIX);
+        return PLANT_PREFIX + TOPIC_SEPARATOR + WILDCARD;
     }
 
     /**
      * Tópico de datos de una planta (ej: "planta/PNT-123/lecturas")
      */
     public String getDeviceDataTopic(String plantId) {
-        return String.format("%s/%s/lecturas", PLANT_PREFIX, plantId);
+        return String.join(TOPIC_SEPARATOR, PLANT_PREFIX, plantId, LECTURAS_SUFFIX);
     }
 
     /**
      * Tópico de comandos de una planta (ej: "planta/PNT-123/command/")
      */
     public String getDeviceCommandTopic(String plantId) {
-        return String.format("%s/%s/command/", PLANT_PREFIX, plantId);
+        return String.join(TOPIC_SEPARATOR, PLANT_PREFIX, plantId, COMMAND_SUFFIX, "");
     }
 
     /**
@@ -35,20 +39,13 @@ public class MqttTopicService {
      * (ej: "planta/general/command")
      */
     public String getGeneralCommandTopic() {
-        return String.format("%s/general/command", PLANT_PREFIX);
+        return String.join(TOPIC_SEPARATOR, PLANT_PREFIX, GENERAL, COMMAND_SUFFIX);
     }
 
-    // --- Tópicos de Provisioning ---
-
-    public String getDiscoveryTopic() {
-        return String.format("%s/discovery", CONTROL_PREFIX);
-    }
-
-    public String getProvisioningConfigTopic(String macAddress) {
-        return String.format("%s/device/%s", CONTROL_PREFIX, macAddress);
-    }
-
-    public String getWildcardControlTopic() {
-        return String.format("%s/#", CONTROL_PREFIX);
+    /**
+     * Tópico WebSocket para una planta específica
+     */
+    public String getWebSocketTopic(String plantId) {
+        return "/topic/plant/" + plantId;
     }
 }

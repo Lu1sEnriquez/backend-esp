@@ -1,9 +1,16 @@
 package com.api.plant.service;
 
+import com.api.plant.config.InfluxConstants;
+import com.api.plant.dto.socket.WebSocketMessage;
+import com.api.plant.dto.socket.TelemetryData;
+import com.api.plant.dto.socket.PumpEvent;
+import com.api.plant.dto.socket.Alert;
 import com.api.plant.entity.AppUser;
+import com.api.plant.entity.PlantAlert;
 import com.api.plant.entity.PlantDevice;
 import com.api.plant.entity.Reading;
 import com.api.plant.repository.AppUserRepository;
+import com.api.plant.repository.PlantAlertRepository;
 import com.api.plant.repository.PlantDeviceRepository;
 import com.influxdb.client.InfluxDBClient;
 import com.influxdb.client.WriteApiBlocking;
@@ -17,6 +24,7 @@ import org.springframework.integration.support.MessageBuilder;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.messaging.MessageChannel;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -25,184 +33,267 @@ import java.util.Optional;
 @Service
 public class TelemetryService {
 
-    // --- 1. INYECCIÓN DE DEPENDENCIAS ---
+    // --- ENUM para tipos de WebSocket ---
+    public enum WebSocketMessageType {
+        TELEMETRY,  // Datos de sensores
+        PUMP_EVENT, // Eventos de bomba
+        ALERT       // Alertas del sistema
+    }
 
-    @Autowired
-    private InfluxDBClient influxDBClient;
+    // --- CONSTANTES LOCALES ---
+    private static final String DEFAULT_EMAIL = "izzyanimal573@gmail.com";
+    private static final String EMAIL_SUBJECT_PREFIX = "[IoT ";
+    private static final String EMAIL_SUBJECT_SUFFIX = "] ";
 
-    @Autowired
-    private JavaMailSender mailSender;
-
-    // Inyectamos el canal de SALIDA para enviar comandos MQTT
+    // --- INYECCIÓN DE DEPENDENCIAS ---
+    @Autowired private InfluxDBClient influxDBClient;
+    @Autowired private JavaMailSender mailSender;
+    @Autowired private MqttTopicService mqttTopicService;
+    @Autowired private PlantDeviceRepository deviceRepository;
+    @Autowired private AppUserRepository userRepository;
+    @Autowired private SimpMessagingTemplate messagingTemplate;
+    @Autowired private PlantAlertRepository alertRepository; // <--- AGREGAR ESTO
     @Autowired
     @Qualifier("mqttOutboundChannel")
     private MessageChannel mqttOutboundChannel;
 
-    // Inyectamos el servicio de Tópicos para no tener strings "quemados"
-    @Autowired
-    private MqttTopicService mqttTopicService;
+    @Value("${influxdb.bucket}") private String bucket;
+    @Value("${influxdb.org}") private String org;
+    @Value("${device.thresholds.humiditySoil.min}") private int minSoilHumidity;
+    @Value("${device.thresholds.temperature.max}") private double maxTemp;
 
-    @Autowired
-    private PlantDeviceRepository deviceRepository;
-    @Autowired
-    private AppUserRepository userRepository;
-
-    // --- 2. VARIABLES DE CONFIGURACIÓN (Properties) ---
-
-    @Value("${influxdb.bucket}")
-    private String bucket;
-
-    @Value("${influxdb.org}")
-    private String org;
-
-    @Value("${device.thresholds.humiditySoil.min}")
-    private int minSoilHumidity; // 35%
-
-    @Value("${device.thresholds.temperature.max}")
-    private double maxTemp;      // 38.0°C
+    // 🔥 NUEVO: Usar el email de configuración de Spring
+    @Value("${spring.mail.username:" + DEFAULT_EMAIL + "}")
+    private String defaultEmail;
 
     // ==========================================
-    // MÉTODO PRINCIPAL (Orquestador)
+    // METODO PRINCIPAL MEJORADO
     // ==========================================
     public void processAndSave(Reading reading) {
 
-        // Paso 1: Control de Calidad (QC)
+        // 🔥 CONVERSIÓN SIMPLE DE STRING A BOOLEAN
+        convertPumpStateToBoolean(reading);
+
+        // CASO ESPECIAL: Si es un EVENTO (Bomba ON/OFF)
+        if (reading.getMsgType() == Reading.MessageType.EVENT) {
+            System.out.println("💧 Evento de Bomba Recibido: " + reading.isPumpOn());
+            reading.setQcStatus(Reading.QcStatus.EVENT);
+
+            saveToInflux(reading);
+            sendWebSocketUpdate(reading.getPlantId(), WebSocketMessageType.PUMP_EVENT, reading);
+            updateDeviceState(reading);
+            return;
+        }
+
+        // FLUJO NORMAL (Lecturas de sensores)
         if (!runQualityControl(reading)) {
-            System.out.println("🚫 Dato descartado por QC (Fuera de Rango o Error): " + reading.getPlantId());
+            System.out.println("🚫 Dato descartado por QC: " + reading.getPlantId());
             reading.setQcStatus(Reading.QcStatus.OUT_OF_RANGE);
         } else {
             reading.setQcStatus(Reading.QcStatus.VALID);
         }
 
-        // Paso 2: Lógica de Negocio (Advisor)
         if (reading.getQcStatus() == Reading.QcStatus.VALID) {
             runAdvisorLogic(reading);
         }
 
-        // Paso 3: Guardar en InfluxDB
+        sendWebSocketUpdate(reading.getPlantId(), WebSocketMessageType.TELEMETRY, reading);
         saveToInflux(reading);
+    }
+
+    // ==========================================
+    // MÉTODO SIMPLIFICADO: CONVERSIÓN A BOOLEAN
+    // ==========================================
+    private void convertPumpStateToBoolean(Reading reading) {
+        try {
+            if (reading.getPumpOn() == null) {
+                reading.setPumpOn(false); // Por defecto OFF
+            }
+        } catch (Exception e) {
+            System.err.println("❌ Error en pumpState: " + e.getMessage());
+            reading.setPumpOn(false);
+        }
+    }
+
+    // ==========================================
+    // MÉTODO WEBSOCKET SIMPLIFICADO CON NUEVAS CLASES
+    // ==========================================
+    private void sendWebSocketUpdate(String plantId, WebSocketMessageType type, Reading reading) {
+        try {
+            WebSocketMessage<?> message = createWebSocketMessage(plantId, type, reading);
+            // 🔥 USAR SERVICIO DE TÓPICOS
+            String destination = mqttTopicService.getWebSocketTopic(plantId);
+            messagingTemplate.convertAndSend(destination, message);
+
+            System.out.println("📡 WebSocket enviado: " + type + " - PumpOn: " + reading.isPumpOn());
+
+        } catch (Exception e) {
+            System.err.println("❌ Error enviando WebSocket: " + e.getMessage());
+        }
+    }
+
+    // ==========================================
+    // MÉTODO PARA CREAR MENSAJES WEBSOCKET
+    // ==========================================
+    private WebSocketMessage<?> createWebSocketMessage(String plantId, WebSocketMessageType type, Reading reading) {
+        return switch (type) {
+            case TELEMETRY -> WebSocketMessage.createTelemetry(plantId, reading);
+            case PUMP_EVENT -> WebSocketMessage.createPumpEvent(plantId, reading);
+            case ALERT -> WebSocketMessage.createAlert(plantId, reading);
+        };
+    }
+
+    // ==========================================
+    // SAVE TO INFLUX MEJORADO CON CONSTANTES
+    // ==========================================
+    private void saveToInflux(Reading r) {
+        try {
+            WriteApiBlocking writeApi = influxDBClient.getWriteApiBlocking();
+
+            Point point = Point.measurement(InfluxConstants.MEASUREMENT_SENSORES_PLANTA)
+                    .addTag(InfluxConstants.TAG_PLANT_ID, r.getPlantId())
+                    .addTag(InfluxConstants.TAG_STATUS_QC, r.getQcStatus().name())
+                    .time(Instant.now(), WritePrecision.NS);
+
+            // Campos de sensores usando constantes
+            if (r.getTempC() != null)
+                point.addField(InfluxConstants.FIELD_TEMPERATURA, r.getTempC());
+            if (r.getAmbientHumidity() != null)
+                point.addField(InfluxConstants.FIELD_HUMEDAD_AIRE, r.getAmbientHumidity());
+            if (r.getSoilHumidity() != null)
+                point.addField(InfluxConstants.FIELD_HUMEDAD_SUELO, r.getSoilHumidity());
+            if (r.getLightLux() != null)
+                point.addField(InfluxConstants.FIELD_LUZ, r.getLightLux());
+
+            // Estado de bomba usando constantes
+            if (r.getPumpOn() != null) {
+                point.addField(InfluxConstants.FIELD_BOMBA_ESTADO, r.isPumpOn() ? 1 : 0);
+            }
+
+            // Alerta activa usando constantes
+            point.addField(InfluxConstants.FIELD_ALERTA_ACTIVA,
+                    r.getAdvisorResult() == Reading.AdvisorResult.CRITICA ? 1 : 0);
+
+            writeApi.writePoint(bucket, org, point);
+            System.out.println("✅ Guardado en InfluxDB: " + r.getPlantId()+ " tempC: "+r.getTempC() + "%, ambiente: "+r.getAmbientHumidity()+ "%, suelo: "+r.getSoilHumidity()+ " lux: "+r.getLightLux());
+
+        } catch (Exception e) {
+            System.err.println("❌ Error Influx: " + e.getMessage());
+        }
     }
 
     // ==========================================
     // LÓGICA INTERNA
     // ==========================================
-
     private boolean runQualityControl(Reading r) {
-        // Validación: Temperatura imposible
-        if (r.getTempC() != null && (r.getTempC() > 80 || r.getTempC() < -20)) {
-            return false;
-        }
-        // Validación: Humedad negativa o > 100
-        if (r.getSoilHumidity() != null && (r.getSoilHumidity() < 0 || r.getSoilHumidity() > 100)) {
-            return false;
-        }
+        if (r.getTempC() != null && (r.getTempC() > 80 || r.getTempC() < -20)) return false;
+        if (r.getSoilHumidity() != null && (r.getSoilHumidity() < 0 || r.getSoilHumidity() > 100)) return false;
         return true;
     }
-
 
     private void runAdvisorLogic(Reading r) {
         r.setAdvisorResult(Reading.AdvisorResult.INFO);
 
-        // --- CASO 1: EMERGENCIA DE RIEGO ---
         if (r.getSoilHumidity() != null && r.getSoilHumidity() < minSoilHumidity) {
             r.setAdvisorResult(Reading.AdvisorResult.CRITICA);
+            System.out.println("⚠️ ALERTA CRÍTICA: Suelo Seco (" + r.getSoilHumidity() + "%).");
 
-            System.out.println("⚠️ ALERTA CRÍTICA: Suelo Seco (" + r.getSoilHumidity() + "%). Iniciando protocolo de riego.");
+            // 1. WebSocket (Tiempo Real)
+            sendWebSocketUpdate(r.getPlantId(), WebSocketMessageType.ALERT, r);
 
-            // Acción A: Enviar comando MQTT al ESP32
-            sendCommand(r.getPlantId(), "{\"cmd\": \"RIEGO\"}");
+            // 2. Persistencia (Historial) - NUEVO 🔥
+            saveAlertToMongo(r, "CRITICA", "Humedad crítica: " + r.getSoilHumidity() + "%", "SOIL_HUMIDITY", r.getSoilHumidity());
 
-            // Acción B: Notificar al usuario
-            sendEmailAlert(r.getPlantId(), "URGENTE: Riego Activado",
-                    "La humedad del suelo bajó a " + r.getSoilHumidity() + "%. Hemos activado la bomba automáticamente.");
+            // 3. Actuación (Riego)
+            String commandTopic = mqttTopicService.getDeviceCommandTopic(r.getPlantId());
+            sendCommand(commandTopic, "{\"cmd\": \"RIEGO\"}");
+
+            // 4. Email
+            sendEmailAlert(r.getPlantId(), "URGENTE: Riego Activado", "Humedad baja...");
         }
-
-        // --- CASO 2: ALERTA AMBIENTAL ---
         else if (r.getTempC() != null && r.getTempC() > maxTemp) {
             r.setAdvisorResult(Reading.AdvisorResult.ALERTA);
-            System.out.println("🔥 ALERTA: Temperatura Alta (" + r.getTempC() + "°C)");
 
-            sendEmailAlert(r.getPlantId(), "Alerta de Calor",
-                    "La temperatura ambiente es crítica: " + r.getTempC() + "°C. Mueve la planta a la sombra.");
+            // 1. WebSocket
+            sendWebSocketUpdate(r.getPlantId(), WebSocketMessageType.ALERT, r);
+
+            // 2. Persistencia - NUEVO 🔥
+            saveAlertToMongo(r, "ALERTA", "Temperatura alta: " + r.getTempC() + "°C", "TEMPERATURE", r.getTempC());
+
+            sendEmailAlert(r.getPlantId(), "Alerta de Calor", "Temp: " + r.getTempC());
         }
     }
 
-
-    private void saveToInflux(Reading r) {
+    private void saveAlertToMongo(Reading r, String severity, String msg, String metric, double val) {
         try {
-            WriteApiBlocking writeApi = influxDBClient.getWriteApiBlocking();
-
-            Point point = Point.measurement("sensores_planta")
-                    .addTag("plantId", r.getPlantId())
-                    .addTag("status_qc", r.getQcStatus().name())
-                    .addField("temperatura", r.getTempC())
-                    .addField("humedad_aire", r.getAmbientHumidity())
-                    .addField("humedad_suelo", r.getSoilHumidity())
-                    .addField("luz", r.getLightLux())
-                    .addField("alerta_activa", r.getAdvisorResult() == Reading.AdvisorResult.CRITICA ? 1 : 0)
-                    .time(Instant.now(), WritePrecision.NS);
-
-            writeApi.writePoint(bucket, org, point);
-            System.out.println("✅ Dato persistido en InfluxDB. ID: " + r.getPlantId());
-
+            PlantAlert alert = new PlantAlert(r.getPlantId(), severity, msg, metric, val);
+            alertRepository.save(alert);
+            System.out.println("💾 Alerta guardada en Mongo ID: " + alert.getId());
         } catch (Exception e) {
-            System.err.println("❌ Error escribiendo en InfluxDB: " + e.getMessage());
+            System.err.println("❌ Error guardando alerta: " + e.getMessage());
         }
     }
 
+    private void updateDeviceState(Reading r) {
+        // Lógica para actualizar estado en MongoDB si es necesario
+    }
 
-    private void sendCommand(String plantId, String jsonCommand) {
-        // USO DE SERVICIO CENTRALIZADO PARA OBTENER EL TÓPICO
-        String targetTopic = mqttTopicService.getDeviceCommandTopic(plantId);
-
+    private void sendCommand(String topic, String jsonCommand) {
         try {
             mqttOutboundChannel.send(MessageBuilder
                     .withPayload(jsonCommand)
-                    .setHeader(MqttHeaders.TOPIC, targetTopic)
+                    .setHeader(MqttHeaders.TOPIC, topic)
                     .setHeader(MqttHeaders.QOS, 1)
                     .build());
-
-            System.out.println("📤 Comando enviado: " + jsonCommand + " -> " + targetTopic);
+            System.out.println("📤 Comando enviado a " + topic + ": " + jsonCommand);
         } catch (Exception e) {
-            System.err.println("❌ Error enviando comando MQTT: " + e.getMessage());
+            System.err.println("❌ Error enviando comando: " + e.getMessage());
         }
     }
 
-
     // ==========================================
-    // 🆕 MÉTODO MODIFICADO: CORREO DINÁMICO
+    // SEND EMAIL ALERT MEJORADO
     // ==========================================
     private void sendEmailAlert(String plantId, String subject, String text) {
         try {
-            String targetEmail = "izzyanimal573@gmail.com"; // Correo por defecto (Administrador)
+            // 🔥 USAR EMAIL DE CONFIGURACIÓN O BUSCAR EN BD
+            String targetEmail = getTargetEmail(plantId);
 
-            // 1. Buscar el dispositivo
+            SimpleMailMessage message = new SimpleMailMessage();
+            message.setTo(targetEmail);
+            message.setSubject(buildEmailSubject(plantId, subject));
+            message.setText(text);
+
+            mailSender.send(message);
+            System.out.println("📧 Email enviado a: " + targetEmail);
+
+        } catch (Exception e) {
+            System.err.println("❌ Error email: " + e.getMessage());
+        }
+    }
+
+    // ==========================================
+    // MÉTODOS PRIVADOS AUXILIARES
+    // ==========================================
+    private String getTargetEmail(String plantId) {
+        try {
             Optional<PlantDevice> deviceOpt = deviceRepository.findByPlantId(plantId);
-
             if (deviceOpt.isPresent()) {
                 String ownerId = deviceOpt.get().getOwnerId();
-
-                // 2. Si tiene dueño, buscar al usuario
                 if (ownerId != null) {
                     Optional<AppUser> userOpt = userRepository.findById(ownerId);
                     if (userOpt.isPresent()) {
-                        targetEmail = userOpt.get().getEmail(); // ✅ BINGO: Usamos el correo del usuario
-                        System.out.println("📧 Destinatario encontrado: " + targetEmail);
+                        return userOpt.get().getEmail();
                     }
                 }
             }
-
-            // 3. Enviar el correo
-            SimpleMailMessage message = new SimpleMailMessage();
-            message.setTo(targetEmail);
-            message.setSubject("[IoT " + plantId + "] " + subject);
-            message.setText(text + "\n\n- Sistema de Monitoreo Automático");
-
-            mailSender.send(message);
-            System.out.println("📧 Correo enviado a: " + targetEmail);
-
         } catch (Exception e) {
-            System.err.println("❌ Error enviando correo: " + e.getMessage());
+            System.err.println("⚠️ No se pudo obtener email del propietario, usando email por defecto");
         }
+        return defaultEmail;
+    }
+
+    private String buildEmailSubject(String plantId, String subject) {
+        return EMAIL_SUBJECT_PREFIX + plantId + EMAIL_SUBJECT_SUFFIX + subject;
     }
 }

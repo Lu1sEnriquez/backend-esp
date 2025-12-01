@@ -1,150 +1,98 @@
 package com.api.plant.entity;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 import java.time.Instant;
 
-/**
- * Entidad que representa una lectura de sensor persistida en Mongo Atlas.
- * Incluye los resultados del QC y del Advisor.
- */
 @Document(collection = "readings")
 public class Reading {
 
-    // --- 1. ENUMS (Resultados de Lógica) ---
-
-    /**
-     * Enum que define el estado de la lectura después de la validación de Calidad (QC).
-     */
+    // --- ENUMS (mantenemos los existentes) ---
     public enum QcStatus {
-        VALID,              // Dato validado y apto para el Advisor.
-        OUT_OF_RANGE,       // Descartado por límites físicos (ej. Temp > 50C).
-        RATE_ERROR,         // Descartado por salto brusco (Outlier Lógico).
-        QC_ERROR            // Error de formato o deserialización.
+        VALID, OUT_OF_RANGE, RATE_ERROR, QC_ERROR, EVENT
     }
 
-    /**
-     * Enum que define el resultado de la Lógica Central (Advisor).
-     */
     public enum AdvisorResult {
-        CRITICA,            // Humedad baja de SUELO -> Requiere RIEGO y Alerta.
-        ALERTA,             // Temp/Humedad AMBIENTAL alta/baja -> Requiere Notificación.
-        RECOMENDACION,      // Luz baja/Problema leve -> Sugerencia para el feed.
-        INFO                // Todo normal.
+        CRITICA, ALERTA, RECOMENDACION, INFO
     }
 
-    // --- 2. CAMPOS DE DATOS ---
+    public enum MessageType {
+        READING, EVENT
+    }
 
+    // --- CAMPOS ---
     @Id
     private String id;
-
-    private String plantId;      // ID del dispositivo/planta (MQTT Username)
-    private String userId;       // ID del usuario dueño (para segmentación de lecturas)
-
+    private String plantId;
+    private String userId;
     private Instant timestamp = Instant.now();
 
-    // DHT11 - Payload: temp_c
     private Double tempC;
-
-    // DHT11 - Payload: humidity_p -> Humedad Ambiental
-    private Integer ambientHumidity; // Renombrado
-
-    // BH1750 - Payload: light_lux
+    private Integer ambientHumidity;
     private Integer lightLux;
+    private Integer soilHumidity;
 
-    // Sensor de Suelo - Payload: soil_humidity -> Humedad de Suelo
-    private Integer soilHumidity; // Renombrado
+    // 🔥 CAMBIO: Usar Boolean en lugar de enum
+    private Boolean pumpOn; // true = ON, false = OFF, null = no info
 
-    // --- 3. CAMPOS DE RESULTADO DEL PROCESAMIENTO ---
-
+    private MessageType msgType = MessageType.READING;
     private QcStatus qcStatus = QcStatus.QC_ERROR;
     private AdvisorResult advisorResult = AdvisorResult.INFO;
 
-    // Constructor vacío
-    public Reading() {
+    // --- CONSTRUCTORES ---
+    public Reading() {}
+
+    // Constructor para eventos de bomba
+    public static Reading createPumpEvent(String plantId, boolean pumpOn) {
+        Reading reading = new Reading();
+        reading.setPlantId(plantId);
+        reading.setPumpOn(pumpOn);
+        reading.setMsgType(MessageType.EVENT);
+        reading.setQcStatus(QcStatus.EVENT);
+        return reading;
     }
 
-    // --- 4. GETTERS Y SETTERS ---
+    // --- GETTERS Y SETTERS ---
+    public String getId() { return id; }
+    public void setId(String id) { this.id = id; }
 
-    public String getId() {
-        return id;
-    }
+    public String getPlantId() { return plantId; }
+    public void setPlantId(String plantId) { this.plantId = plantId; }
 
-    public void setId(String id) {
-        this.id = id;
-    }
+    public String getUserId() { return userId; }
+    public void setUserId(String userId) { this.userId = userId; }
 
-    public String getPlantId() {
-        return plantId;
-    }
+    public Instant getTimestamp() { return timestamp; }
+    public void setTimestamp(Instant timestamp) { this.timestamp = timestamp; }
 
-    public void setPlantId(String plantId) {
-        this.plantId = plantId;
-    }
+    public Double getTempC() { return tempC; }
+    public void setTempC(Double tempC) { this.tempC = tempC; }
 
-    public String getUserId() {
-        return userId;
-    }
+    public Integer getAmbientHumidity() { return ambientHumidity; }
+    public void setAmbientHumidity(Integer ambientHumidity) { this.ambientHumidity = ambientHumidity; }
 
-    public void setUserId(String userId) {
-        this.userId = userId;
-    }
+    public Integer getLightLux() { return lightLux; }
+    public void setLightLux(Integer lightLux) { this.lightLux = lightLux; }
 
-    public Instant getTimestamp() {
-        return timestamp;
-    }
+    public Integer getSoilHumidity() { return soilHumidity; }
+    public void setSoilHumidity(Integer soilHumidity) { this.soilHumidity = soilHumidity; }
 
-    public void setTimestamp(Instant timestamp) {
-        this.timestamp = timestamp;
-    }
+    // 🔥 CAMBIO: Getters/Setters con Boolean
+    public Boolean getPumpOn() { return pumpOn; }
+    public void setPumpOn(Boolean pumpOn) { this.pumpOn = pumpOn; }
 
-    public Double getTempC() {
-        return tempC;
-    }
+    public MessageType getMsgType() { return msgType; }
+    public void setMsgType(MessageType msgType) { this.msgType = msgType; }
 
-    public void setTempC(Double tempC) {
-        this.tempC = tempC;
-    }
+    public QcStatus getQcStatus() { return qcStatus; }
+    public void setQcStatus(QcStatus qcStatus) { this.qcStatus = qcStatus; }
 
-    // Humedad AMBIENTAL
-    public Integer getAmbientHumidity() {
-        return ambientHumidity;
-    }
+    public AdvisorResult getAdvisorResult() { return advisorResult; }
+    public void setAdvisorResult(AdvisorResult advisorResult) { this.advisorResult = advisorResult; }
 
-    public void setAmbientHumidity(Integer ambientHumidity) {
-        this.ambientHumidity = ambientHumidity;
-    }
-
-    public Integer getLightLux() {
-        return lightLux;
-    }
-
-    public void setLightLux(Integer lightLux) {
-        this.lightLux = lightLux;
-    }
-
-    // Humedad de SUELO
-    public Integer getSoilHumidity() {
-        return soilHumidity;
-    }
-
-    public void setSoilHumidity(Integer soilHumidity) {
-        this.soilHumidity = soilHumidity;
-    }
-
-    public QcStatus getQcStatus() {
-        return qcStatus;
-    }
-
-    public void setQcStatus(QcStatus qcStatus) {
-        this.qcStatus = qcStatus;
-    }
-
-    public AdvisorResult getAdvisorResult() {
-        return advisorResult;
-    }
-
-    public void setAdvisorResult(AdvisorResult advisorResult) {
-        this.advisorResult = advisorResult;
+    // 🔥 MÉTODO CONVENIENTE
+    public boolean isPumpOn() {
+        return Boolean.TRUE.equals(pumpOn);
     }
 }
