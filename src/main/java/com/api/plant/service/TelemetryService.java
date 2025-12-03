@@ -67,7 +67,8 @@ public class TelemetryService {
     // ==========================================
     public void processAndSave(Reading reading) {
         convertPumpStateToBoolean(reading);
-
+        System.out.println(" reading: " + reading.getPlantId()+" humidity: "+reading.getAmbientHumidity()+" humidity soil: "
+                +reading.getSoilHumidity()+" tempC: "+reading.getTempC()+" lux: "+reading.getLightLux());
         if (reading.getMsgType() == Reading.MessageType.EVENT) {
             System.out.println("💧 Evento de Bomba Recibido: " + reading.isPumpOn());
             reading.setQcStatus(Reading.QcStatus.EVENT);
